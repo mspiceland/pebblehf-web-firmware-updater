@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AVR Web Flasher — ATmega328P / STK500v1</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a212b;
+    --panel-2: #232c38;
+    --border: #2e3a48;
+    --text: #e6edf3;
+    --muted: #8b98a8;
+    --accent: #3b82f6;
+    --accent-2: #2563eb;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #16202c 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }
+  header h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.3px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  .cmd {
+    margin-top: 14px; font-family: var(--mono); font-size: 12.5px;
+    background: #0b0f14; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; color: #9fd3ff; overflow-x: auto; white-space: nowrap;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; margin-top: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+
+  /* Dropzone */
+  #drop {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 32px 20px;
+    text-align: center; cursor: pointer; transition: 0.15s; background: var(--panel-2);
+  }
+  #drop:hover { border-color: var(--accent); }
+  #drop.drag { border-color: var(--accent); background: #1d3350; }
+  #drop .big { font-size: 15px; font-weight: 600; }
+  #drop .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  #drop.has-file { border-style: solid; border-color: var(--green); }
+  .file-info { margin-top: 12px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .file-info b { color: var(--text); }
+
+  .options { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+  .opt { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .opt input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .opt .hint { color: var(--muted); font-size: 12.5px; }
+
+  .actions { display: flex; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
+  button {
+    font-size: 14px; font-weight: 600; padding: 11px 20px; border-radius: 10px;
+    border: 1px solid transparent; cursor: pointer; transition: 0.15s;
+  }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:not(:disabled):hover { background: var(--accent-2); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-ghost:not(:disabled):hover { border-color: var(--accent); }
+
+  /* Progress */
+  .prog-row { margin-top: 16px; }
+  .prog-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+  .prog-head .label { font-weight: 600; }
+  .prog-head .stats { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .bar { height: 12px; background: #0b0f14; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  .bar > span { display: block; height: 100%; width: 0%; transition: width 0.12s linear; border-radius: 8px; }
+  .bar.write > span { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+  .bar.verify > span { background: linear-gradient(90deg, #22c55e, #4ade80); }
+
+  /* Log */
+  #log {
+    margin-top: 4px; height: 220px; overflow-y: auto; background: #0b0f14;
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap;
+  }
+  #log .t { color: var(--muted); }
+  #log .info { color: var(--text); }
+  #log .ok { color: var(--green); }
+  #log .warn { color: var(--amber); }
+  #log .err { color: var(--red); }
+  #log .cmd { color: #9fd3ff; background: none; border: none; padding: 0; }
+
+  .status-banner {
+    margin-top: 16px; padding: 14px 16px; border-radius: 10px; font-weight: 600;
+    display: none; align-items: center; gap: 10px;
+  }
+  .status-banner.show { display: flex; }
+  .status-banner.success { background: #0f2a1a; border: 1px solid var(--green); color: #86efac; }
+  .status-banner.fail { background: #2a0f12; border: 1px solid var(--red); color: #fca5a5; }
+
+  .nosupport {
+    background: #2a0f12; border: 1px solid var(--red); color: #fca5a5;
+    padding: 16px; border-radius: 10px; margin-top: 20px; font-size: 14px;
+  }
+  .nosupport b { color: #fff; }
+  code { font-family: var(--mono); background: #0b0f14; padding: 1px 6px; border-radius: 5px; font-size: 0.92em; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>AVR Web Flasher</h1>
+    <p>Flash an Intel HEX file to an ATmega328P over USB-serial using STK500&nbsp;v1 — in the browser.</p>
+    <div class="cmd">avrdude -c stk500v1 -p m328p -P &lt;serial&gt; -b 19200 -U flash:w:firmware.hex</div>
+  </header>
+
+  <div id="unsupported" class="nosupport" style="display:none;">
+    <b>Web Serial is not available in this browser.</b><br>
+    This tool needs the Web Serial API (<code>navigator.serial</code>), which is only available in
+    Chromium-based browsers — <b>Chrome, Edge, Brave, or Opera</b> — served over <code>https://</code> or <code>localhost</code>.
+    Please switch browsers and reload.
+  </div>
+
+  <main id="app">
+    <!-- File -->
+    <div class="card">
+      <h2>1 · Firmware (.hex)</h2>
+      <div id="drop">
+        <div class="big">Drop your <code>.hex</code> file here</div>
+        <div class="sub">or click to browse</div>
+        <input id="file" type="file" accept=".hex,.ihex,.eep,text/plain" hidden />
+      </div>
+      <div id="fileInfo" class="file-info" style="display:none;"></div>
+    </div>
+
+    <!-- Options + Flash -->
+    <div class="card">
+      <h2>2 · Options</h2>
+      <div class="options">
+        <label class="opt">
+          <input id="optReset" type="checkbox" checked />
+          <span>Toggle DTR/RTS to auto-reset the board before syncing
+            <span class="hint">(default ON — needed for Arduino bootloaders)</span></span>
+        </label>
+        <label class="opt">
+          <input id="optSetDevice" type="checkbox" checked />
+          <span>Send STK_SET_DEVICE before entering programming mode
+            <span class="hint">(helps stricter bootloaders)</span></span>
+        </label>
+        <label class="opt">
+          <input id="optCheckSig" type="checkbox" checked />
+          <span>Read &amp; verify device signature <code>1E 95 0F</code>
+            <span class="hint">(abort on mismatch; some bootloaders skip this)</span></span>
+        </label>
+        <label class="opt">
+          <input id="optVerify" type="checkbox" checked />
+          <span>Verify flash after writing
+            <span class="hint">(mirrors avrdude's verify phase)</span></span>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="flashBtn" class="btn-primary" disabled>Connect &amp; Flash</button>
+        <button id="clearBtn" class="btn-ghost">Clear Log</button>
+      </div>
+
+      <div class="status-banner" id="banner"></div>
+
+      <!-- Progress -->
+      <div class="prog-row">
+        <div class="prog-head">
+          <span class="label">Writing</span>
+          <span class="stats" id="writeStats">— / — bytes · 0.0s</span>
+        </div>
+        <div class="bar write"><span id="writeBar"></span></div>
+      </div>
+      <div class="prog-row">
+        <div class="prog-head">
+          <span class="label">Verifying</span>
+          <span class="stats" id="verifyStats">— / — bytes · 0.0s</span>
+        </div>
+        <div class="bar verify"><span id="verifyBar"></span></div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="card">
+      <h2>3 · Status Log</h2>
+      <div id="log"></div>
+    </div>
+  </main>
+
+  <footer>
+    STK500v1 over Web Serial · 19200 baud 8N1 · ATmega328P (32&nbsp;KB flash, 128-byte page, sig 1E&nbsp;95&nbsp;0F)
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+ * Constants — STK500 v1 protocol (avrdude stk500.c / AVR061)
+ * ============================================================ */
+const STK = {
+  OK:            0x10, // Resp_STK_OK
+  INSYNC:        0x14, // Resp_STK_INSYNC
+  NOSYNC:        0x15,
+  CRC_EOP:       0x20, // Sync_CRC_EOP  (terminator appended to every command)
+  GET_SYNC:      0x30, // Cmnd_STK_GET_SYNC
+  GET_PARAMETER: 0x41,
+  SET_DEVICE:    0x42, // Cmnd_STK_SET_DEVICE
+  SET_DEVICE_EXT:0x45,
+  ENTER_PROGMODE:0x50, // Cmnd_STK_ENTER_PROGMODE
+  LEAVE_PROGMODE:0x51, // Cmnd_STK_LEAVE_PROGMODE
+  LOAD_ADDRESS:  0x55, // Cmnd_STK_LOAD_ADDRESS
+  PROG_PAGE:     0x64, // Cmnd_STK_PROG_PAGE
+  READ_PAGE:     0x74, // Cmnd_STK_READ_PAGE
+  READ_SIGN:     0x75, // Cmnd_STK_READ_SIGN
+  FLASH_MEM:     0x46, // 'F'
+};
+
+// ATmega328P device parameters
+const DEV = {
+  name: "ATmega328P",
+  pageSize: 128,        // bytes per flash page
+  flashSize: 32768,     // 32 KB
+  signature: [0x1E, 0x95, 0x0F],
+};
+
+const BAUD = 19200;
+const CMD_TIMEOUT = 1500;   // ms per command
+const SYNC_RETRIES = 5;
+
+/* ============================================================
+ * DOM helpers
+ * ============================================================ */
+const $ = (id) => document.getElementById(id);
+const dropEl = $("drop");
+const fileInput = $("file");
+const fileInfoEl = $("fileInfo");
+const flashBtn = $("flashBtn");
+const clearBtn = $("clearBtn");
+const logEl = $("log");
+const bannerEl = $("banner");
+const writeBar = $("writeBar"), writeStats = $("writeStats");
+const verifyBar = $("verifyBar"), verifyStats = $("verifyStats");
+
+let parsedFirmware = null;   // Uint8Array, padded
+let busy = false;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const hex2 = (b) => b.toString(16).toUpperCase().padStart(2, "0");
+
+function log(msg, cls = "info") {
+  const t = new Date().toLocaleTimeString();
+  const line = document.createElement("div");
+  line.innerHTML = `<span class="t">[${t}]</span> <span class="${cls}">${msg}</span>`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setBanner(kind, msg) {
+  bannerEl.className = "status-banner show " + kind;
+  bannerEl.textContent = (kind === "success" ? "\u2713 " : "\u2717 ") + msg;
+}
+function clearBanner() { bannerEl.className = "status-banner"; bannerEl.textContent = ""; }
+
+function setProgress(which, done, total, startTime) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const secs = ((performance.now() - startTime) / 1000).toFixed(1);
+  if (which === "write") {
+    writeBar.style.width = pct + "%";
+    writeStats.textContent = `${pct}% · ${done}/${total} bytes · ${secs}s`;
+  } else {
+    verifyBar.style.width = pct + "%";
+    verifyStats.textContent = `${pct}% · ${done}/${total} bytes · ${secs}s`;
+  }
+}
+function resetProgress() {
+  writeBar.style.width = "0%"; verifyBar.style.width = "0%";
+  writeStats.textContent = "— / — bytes · 0.0s";
+  verifyStats.textContent = "— / — bytes · 0.0s";
+}
+
+/* ============================================================
+ * Intel HEX parser
+ *  - 00 data, 01 EOF, 02 ext segment addr, 04 ext linear addr
+ *  - flat buffer, gaps filled 0xFF, final page padded to 128
+ * ============================================================ */
+function parseIntelHex(text) {
+  const lines = text.split(/\r?\n/);
+  const chunks = [];     // {addr, bytes}
+  let maxAddr = 0;
+  let baseAddr = 0;      // from ext-address records (upper bits)
+  let sawEOF = false;
+  let dataRecords = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+    if (line === "") continue;
+    if (line[0] !== ":") throw new Error(`Line ${i + 1}: record does not start with ':'`);
+
+    const raw = line.slice(1);
+    if (raw.length < 10 || raw.length % 2 !== 0)
+      throw new Error(`Line ${i + 1}: malformed record length`);
+
+    const bytes = [];
+    for (let j = 0; j < raw.length; j += 2) {
+      const b = parseInt(raw.substr(j, 2), 16);
+      if (Number.isNaN(b)) throw new Error(`Line ${i + 1}: invalid hex digits`);
+      bytes.push(b);
+    }
+
+    const byteCount = bytes[0];
+    const addr = (bytes[1] << 8) | bytes[2];
+    const recType = bytes[3];
+    if (bytes.length !== byteCount + 5)
+      throw new Error(`Line ${i + 1}: byte count mismatch`);
+
+    // checksum: two's complement of sum of all bytes == 0
+    const sum = bytes.reduce((a, b) => (a + b) & 0xff, 0);
+    if (sum !== 0) throw new Error(`Line ${i + 1}: checksum error`);
+
+    const data = bytes.slice(4, 4 + byteCount);
+
+    switch (recType) {
+      case 0x00: { // data
+        const absAddr = baseAddr + addr;
+        chunks.push({ addr: absAddr, bytes: data });
+        maxAddr = Math.max(maxAddr, absAddr + data.length);
+        dataRecords++;
+        break;
+      }
+      case 0x01: // EOF
+        sawEOF = true;
+        break;
+      case 0x02: // extended segment address (upper bits << 4)
+        baseAddr = ((data[0] << 8) | data[1]) << 4;
+        break;
+      case 0x04: // extended linear address (upper 16 bits << 16)
+        baseAddr = ((data[0] << 8) | data[1]) << 16;
+        break;
+      case 0x03: // start segment address — ignore
+      case 0x05: // start linear address — ignore
+        break;
+      default:
+        // Don't crash on unknown record types; just note it.
+        console.warn(`Line ${i + 1}: ignoring unknown record type 0x${hex2(recType)}`);
+    }
+    if (sawEOF) break;
+  }
+
+  if (dataRecords === 0) throw new Error("No data records (type 00) found");
+  if (!sawEOF) throw new Error("No EOF record (type 01) found");
+  if (maxAddr > DEV.flashSize)
+    throw new Error(`Firmware (${maxAddr} bytes) exceeds ${DEV.name} flash (${DEV.flashSize} bytes)`);
+
+  // Build flat buffer padded to whole pages, filled with 0xFF.
+  const totalSize = Math.ceil(maxAddr / DEV.pageSize) * DEV.pageSize;
+  const buf = new Uint8Array(totalSize).fill(0xff);
+  for (const c of chunks) {
+    for (let k = 0; k < c.bytes.length; k++) buf[c.addr + k] = c.bytes[k];
+  }
+  return { data: buf, used: maxAddr };
+}
+
+/* ============================================================
+ * Serial transport — buffered read loop
+ * ============================================================ */
+class Transport {
+  constructor(port) {
+    this.port = port;
+    this.rx = [];          // accumulated received bytes
+    this.reader = null;
+    this.writer = null;
+    this._loop = null;
+    this._closed = false;
+  }
+  async open() {
+    await this.port.open({ baudRate: BAUD, dataBits: 8, stopBits: 1, parity: "none", bufferSize: 4096 });
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    this._loop = this._readLoop();
+  }
+  async _readLoop() {
+    try {
+      while (true) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        if (value) for (let i = 0; i < value.length; i++) this.rx.push(value[i]);
+      }
+    } catch (e) {
+      // reader cancelled or device unplugged
+    }
+  }
+  flushInput() { this.rx.length = 0; }
+
+  async write(bytes) {
+    await this.writer.write(new Uint8Array(bytes));
+  }
+
+  // Wait until `n` bytes are available, else throw on timeout.
+  async readBytes(n, timeout = CMD_TIMEOUT) {
+    const start = performance.now();
+    while (this.rx.length < n) {
+      if (this._closed) throw new Error("port closed during read");
+      if (performance.now() - start > timeout)
+        throw new Error(`timeout waiting for ${n} byte(s) (got ${this.rx.length})`);
+      await sleep(2);
+    }
+    return this.rx.splice(0, n);
+  }
+
+  async setSignals(sig) {
+    try { await this.port.setSignals(sig); } catch (e) { /* some adapters lack control lines */ }
+  }
+
+  async close() {
+    this._closed = true;
+    if (this.reader) {
+      try { await this.reader.cancel(); } catch (e) {}
+      try { this.reader.releaseLock(); } catch (e) {}
+    }
+    if (this.writer) {
+      try { await this.writer.close(); } catch (e) {}
+      try { this.writer.releaseLock(); } catch (e) {}
+    }
+    try { await this.port.close(); } catch (e) {}
+  }
+}
+
+/* ============================================================
+ * STK500 v1 command primitives
+ * ============================================================ */
+// Send <cmdBytes> + CRC_EOP; expect INSYNC [optional data...] OK.
+async function stkTransact(tr, cmdBytes, respLen = 0, timeout = CMD_TIMEOUT) {
+  tr.flushInput();
+  await tr.write([...cmdBytes, STK.CRC_EOP]);
+
+  const head = await tr.readBytes(1, timeout);
+  if (head[0] !== STK.INSYNC)
+    throw new Error(`expected INSYNC (0x14) but got 0x${hex2(head[0])}`);
+
+  let data = [];
+  if (respLen > 0) data = await tr.readBytes(respLen, timeout);
+
+  const tail = await tr.readBytes(1, timeout);
+  if (tail[0] !== STK.OK)
+    throw new Error(`expected OK (0x10) but got 0x${hex2(tail[0])}`);
+
+  return data;
+}
+
+// Sync with retries; flush input each attempt to clear reset noise.
+async function stkGetSync(tr) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= SYNC_RETRIES; attempt++) {
+    try {
+      tr.flushInput();
+      await tr.write([STK.GET_SYNC, STK.CRC_EOP]);
+      // read response with short timeout; accept INSYNC then OK
+      const r = await tr.readBytes(1, 500);
+      if (r[0] === STK.INSYNC) {
+        const ok = await tr.readBytes(1, 500);
+        if (ok[0] === STK.OK) {
+          log(`Sync established (attempt ${attempt}).`, "ok");
+          return true;
+        }
+      }
+      lastErr = new Error(`unexpected sync byte 0x${hex2(r[0])}`);
+    } catch (e) {
+      lastErr = e;
+    }
+    log(`Sync attempt ${attempt} failed: ${lastErr.message}`, "warn");
+    await sleep(120);
+  }
+  throw new Error(`could not get in sync after ${SYNC_RETRIES} attempts (${lastErr ? lastErr.message : "no response"})`);
+}
+
+// STK_SET_DEVICE — values modeled on avrdude's m328p config.
+async function stkSetDevice(tr) {
+  const cmd = [
+    STK.SET_DEVICE,
+    0x86,       // devicecode (generic)
+    0x00,       // revision
+    0x00,       // progtype (parallel/serial)
+    0x01,       // parmode
+    0x01,       // polling
+    0x01,       // selftimed
+    0x01,       // lockbytes
+    0x03,       // fusebytes
+    0xff, 0xff, 0xff, 0xff, // flashpoll/eeprompoll
+    0x00, 0x80, // pagesize hi/lo = 128
+    0x04, 0x00, // eepromsize
+    0x00, 0x00, 0x80, 0x00, // flashsize = 0x8000 (32768)
+  ];
+  await stkTransact(tr, cmd);
+}
+
+async function stkEnterProgmode(tr) { await stkTransact(tr, [STK.ENTER_PROGMODE]); }
+async function stkLeaveProgmode(tr) { await stkTransact(tr, [STK.LEAVE_PROGMODE]); }
+
+async function stkReadSignature(tr) {
+  return await stkTransact(tr, [STK.READ_SIGN], 3);
+}
+
+// Set the WORD address (byteAddr/2), little-endian.
+async function stkLoadAddress(tr, byteAddr) {
+  const word = byteAddr >> 1;
+  await stkTransact(tr, [STK.LOAD_ADDRESS, word & 0xff, (word >> 8) & 0xff]);
+}
+
+// Program one flash page.
+async function stkProgPage(tr, pageData) {
+  const len = pageData.length;
+  const cmd = [STK.PROG_PAGE, (len >> 8) & 0xff, len & 0xff, STK.FLASH_MEM, ...pageData];
+  await stkTransact(tr, cmd, 0, CMD_TIMEOUT);
+}
+
+// Read one flash page back.
+async function stkReadPage(tr, len) {
+  const cmd = [STK.READ_PAGE, (len >> 8) & 0xff, len & 0xff, STK.FLASH_MEM];
+  return await stkTransact(tr, cmd, len, CMD_TIMEOUT);
+}
+
+/* ============================================================
+ * Reset pulse via DTR/RTS (auto-reset)
+ * ============================================================ */
+async function pulseReset(tr) {
+  log("Toggling DTR/RTS to reset the board…");
+  await tr.setSignals({ dataTerminalReady: false, requestToSend: false });
+  await sleep(50);
+  await tr.setSignals({ dataTerminalReady: true, requestToSend: true });
+  await sleep(50);
+  // some setups assert reset on the falling edge; pulse low again briefly
+  await tr.setSignals({ dataTerminalReady: false, requestToSend: false });
+  await sleep(50);
+  await tr.setSignals({ dataTerminalReady: true, requestToSend: true });
+  await sleep(120); // let bootloader settle
+}
+
+/* ============================================================
+ * Main flash routine
+ * ============================================================ */
+async function flashFirmware() {
+  if (!parsedFirmware) return;
+  setBusy(true);
+  clearBanner();
+  resetProgress();
+
+  const doReset = $("optReset").checked;
+  const doSetDevice = $("optSetDevice").checked;
+  const doCheckSig = $("optCheckSig").checked;
+  const doVerify = $("optVerify").checked;
+
+  const data = parsedFirmware.data;
+  const total = data.length;
+  const pageSize = DEV.pageSize;
+
+  let port = null, tr = null;
+
+  try {
+    log("Requesting serial port…");
+    port = await navigator.serial.requestPort();
+    tr = new Transport(port);
+    await tr.open();
+    log(`Port opened @ ${BAUD} baud, 8N1.`, "ok");
+
+    // Auto-reset
+    if (doReset) {
+      await pulseReset(tr);
+    } else {
+      log("Auto-reset disabled — assuming board is already in bootloader.", "warn");
+      await sleep(100);
+    }
+
+    // Sync
+    await stkGetSync(tr);
+
+    // Optional SET_DEVICE
+    if (doSetDevice) {
+      log("Sending STK_SET_DEVICE…");
+      await stkSetDevice(tr);
+      log("STK_SET_DEVICE acknowledged.", "ok");
+    }
+
+    // Enter programming mode
+    log("Entering programming mode…");
+    await stkEnterProgmode(tr);
+    log("In programming mode.", "ok");
+
+    // Signature check
+    if (doCheckSig) {
+      try {
+        const sig = await stkReadSignature(tr);
+        const sigStr = sig.map(hex2).join(" ");
+        log(`Device signature: ${sigStr}`);
+        const match = sig.length === 3 && sig.every((b, i) => b === DEV.signature[i]);
+        if (!match) {
+          throw new Error(`signature mismatch — expected 1E 95 0F for ${DEV.name}, got ${sigStr}`);
+        }
+        log(`Signature matches ${DEV.name}.`, "ok");
+      } catch (e) {
+        if (/mismatch/.test(e.message)) throw e;       // hard abort on wrong chip
+        log(`Signature read not supported by bootloader (${e.message}). Continuing.`, "warn");
+      }
+    }
+
+    /* ---------- WRITE PHASE ---------- */
+    log(`Writing ${total} bytes (${total / pageSize} pages)…`);
+    const wStart = performance.now();
+    for (let addr = 0; addr < total; addr += pageSize) {
+      const page = data.subarray(addr, addr + pageSize);
+      await stkLoadAddress(tr, addr);
+      await stkProgPage(tr, page);
+      setProgress("write", addr + page.length, total, wStart);
+    }
+    const wSecs = ((performance.now() - wStart) / 1000).toFixed(1);
+    log(`Write complete in ${wSecs}s.`, "ok");
+
+    /* ---------- VERIFY PHASE ---------- */
+    if (doVerify) {
+      log(`Verifying ${total} bytes…`);
+      const vStart = performance.now();
+      for (let addr = 0; addr < total; addr += pageSize) {
+        const len = Math.min(pageSize, total - addr);
+        await stkLoadAddress(tr, addr);
+        const readBack = await stkReadPage(tr, len);
+        for (let k = 0; k < len; k++) {
+          if (readBack[k] !== data[addr + k]) {
+            throw new Error(
+              `verify mismatch at 0x${(addr + k).toString(16).toUpperCase()}: ` +
+              `wrote 0x${hex2(data[addr + k])}, read 0x${hex2(readBack[k])}`
+            );
+          }
+        }
+        setProgress("verify", addr + len, total, vStart);
+      }
+      const vSecs = ((performance.now() - vStart) / 1000).toFixed(1);
+      log(`Verify complete in ${vSecs}s — all bytes match.`, "ok");
+    } else {
+      log("Verify phase skipped (disabled).", "warn");
+      verifyStats.textContent = "skipped";
+    }
+
+    // Leave programming mode
+    log("Leaving programming mode…");
+    await stkLeaveProgmode(tr);
+
+    setBanner("success", doVerify
+      ? "Flash written and verified successfully."
+      : "Flash written successfully (verify skipped).");
+    log("Done. \u2713", "ok");
+
+  } catch (err) {
+    console.error(err);
+    log(`ERROR: ${err.message}`, "err");
+    setBanner("fail", `Failed: ${err.message}`);
+    // Best-effort attempt to leave progmode so the sketch starts.
+    if (tr) { try { await stkLeaveProgmode(tr); } catch (e) {} }
+  } finally {
+    if (tr) {
+      try { await tr.close(); log("Serial port closed."); } catch (e) {}
+    }
+    setBusy(false);
+  }
+}
+
+/* ============================================================
+ * UI wiring
+ * ============================================================ */
+function setBusy(b) {
+  busy = b;
+  flashBtn.disabled = b || !parsedFirmware;
+  fileInput.disabled = b;
+  dropEl.style.pointerEvents = b ? "none" : "auto";
+  dropEl.style.opacity = b ? "0.6" : "1";
+  ["optReset", "optSetDevice", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
+  flashBtn.textContent = b ? "Flashing…" : "Connect & Flash";
+}
+
+function handleFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const fw = parseIntelHex(String(reader.result));
+      parsedFirmware = fw;
+      const pages = fw.data.length / DEV.pageSize;
+      dropEl.classList.add("has-file");
+      dropEl.querySelector(".big").textContent = file.name;
+      dropEl.querySelector(".sub").textContent = "valid Intel HEX — click to choose another";
+      fileInfoEl.style.display = "block";
+      fileInfoEl.innerHTML =
+        `Parsed OK · <b>${fw.used}</b> bytes used · padded to <b>${fw.data.length}</b> bytes ` +
+        `(<b>${pages}</b> × ${DEV.pageSize}-byte pages)`;
+      log(`Loaded "${file.name}": ${fw.used} bytes, ${pages} pages.`, "ok");
+      flashBtn.disabled = busy;
+      clearBanner();
+    } catch (e) {
+      parsedFirmware = null;
+      dropEl.classList.remove("has-file");
+      fileInfoEl.style.display = "block";
+      fileInfoEl.innerHTML = `<span style="color:var(--red)">Invalid Intel HEX: ${e.message}</span>`;
+      flashBtn.disabled = true;
+      log(`Failed to parse "${file.name}": ${e.message}`, "err");
+    }
+  };
+  reader.onerror = () => log("Could not read file.", "err");
+  reader.readAsText(file);
+}
+
+// Dropzone events
+dropEl.addEventListener("click", () => { if (!busy) fileInput.click(); });
+fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+["dragenter", "dragover"].forEach((ev) =>
+  dropEl.addEventListener(ev, (e) => { e.preventDefault(); if (!busy) dropEl.classList.add("drag"); }));
+["dragleave", "drop"].forEach((ev) =>
+  dropEl.addEventListener(ev, (e) => { e.preventDefault(); dropEl.classList.remove("drag"); }));
+dropEl.addEventListener("drop", (e) => {
+  if (busy) return;
+  const f = e.dataTransfer.files[0];
+  handleFile(f);
+});
+
+flashBtn.addEventListener("click", () => { if (!busy && parsedFirmware) flashFirmware(); });
+clearBtn.addEventListener("click", () => { logEl.innerHTML = ""; clearBanner(); });
+
+// Reflect disconnects in UI
+if (navigator.serial) {
+  navigator.serial.addEventListener("disconnect", () => {
+    if (busy) log("Device disconnected.", "warn");
+  });
+}
+
+/* ============================================================
+ * Browser support gate
+ * ============================================================ */
+(function init() {
+  if (!("serial" in navigator)) {
+    $("unsupported").style.display = "block";
+    $("app").style.display = "none";
+    return;
+  }
+  log("Ready. Load a .hex file, then click Connect & Flash.", "info");
+})();
+</script>
+</body>
+</html>
