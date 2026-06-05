@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AVR Web Flasher — ATmega328P / STK500v1</title>
+<title>Pebble HF Web Firmware Updater</title>
 <style>
   :root {
     --bg: #0f1419;
@@ -56,7 +56,17 @@
   .file-info { margin-top: 12px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
   .file-info b { color: var(--text); }
 
-  .options { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+  .adv { border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+  .adv > summary {
+    cursor: pointer; list-style: none; padding: 12px 14px; font-size: 13px; font-weight: 600;
+    color: var(--muted); user-select: none; display: flex; align-items: center; gap: 8px;
+  }
+  .adv > summary::-webkit-details-marker { display: none; }
+  .adv > summary::before { content: "\25B6"; font-size: 10px; transition: transform 0.15s; }
+  .adv[open] > summary::before { transform: rotate(90deg); }
+  .adv > summary:hover { color: var(--text); }
+  .adv .options { padding: 0 14px 14px; }
+  .options { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
   .opt { display: flex; align-items: center; gap: 10px; font-size: 14px; }
   .opt input { width: 16px; height: 16px; accent-color: var(--accent); }
   .opt .hint { color: var(--muted); font-size: 12.5px; }
@@ -115,7 +125,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>AVR Web Flasher</h1>
+    <h1>Pebble HF Web Firmware Updater</h1>
     <p>Flash an Intel HEX file to an ATmega328P over USB-serial using STK500&nbsp;v1 — in the browser.</p>
     <div class="cmd">avrdude -c stk500v1 -p m328p -P &lt;serial&gt; -b 19200 -U flash:w:firmware.hex</div>
   </header>
@@ -141,34 +151,37 @@
 
     <!-- Options + Flash -->
     <div class="card">
-      <h2>2 · Options</h2>
-      <div class="options">
-        <label class="opt">
-          <input id="optReset" type="checkbox" checked />
-          <span>Toggle DTR/RTS to auto-reset the board before syncing
-            <span class="hint">(default ON — needed for Arduino bootloaders)</span></span>
-        </label>
-        <label class="opt">
-          <input id="optSetDevice" type="checkbox" checked />
-          <span>Send STK_SET_DEVICE before entering programming mode
-            <span class="hint">(helps stricter bootloaders)</span></span>
-        </label>
-        <label class="opt">
-          <input id="optErase" type="checkbox" checked />
-          <span>Chip erase before writing
-            <span class="hint">(matches avrdude's default; required for Arduino-as-ISP / STK500 — flash must be erased before bits can be set)</span></span>
-        </label>
-        <label class="opt">
-          <input id="optCheckSig" type="checkbox" checked />
-          <span>Read &amp; verify device signature <code>1E 95 0F</code>
-            <span class="hint">(abort on mismatch; some bootloaders skip this)</span></span>
-        </label>
-        <label class="opt">
-          <input id="optVerify" type="checkbox" checked />
-          <span>Verify flash after writing
-            <span class="hint">(mirrors avrdude's verify phase)</span></span>
-        </label>
-      </div>
+      <h2>2 · Flash</h2>
+      <details class="adv">
+        <summary>Advanced options</summary>
+        <div class="options">
+          <label class="opt">
+            <input id="optReset" type="checkbox" checked />
+            <span>Toggle DTR/RTS to auto-reset the board before syncing
+              <span class="hint">(default ON — needed for Arduino bootloaders)</span></span>
+          </label>
+          <label class="opt">
+            <input id="optSetDevice" type="checkbox" checked />
+            <span>Send STK_SET_DEVICE before entering programming mode
+              <span class="hint">(helps stricter bootloaders)</span></span>
+          </label>
+          <label class="opt">
+            <input id="optErase" type="checkbox" checked />
+            <span>Chip erase before writing
+              <span class="hint">(matches avrdude's default; required for Arduino-as-ISP / STK500 — flash must be erased before bits can be set)</span></span>
+          </label>
+          <label class="opt">
+            <input id="optCheckSig" type="checkbox" checked />
+            <span>Read &amp; verify device signature <code>1E 95 0F</code>
+              <span class="hint">(abort on mismatch; some bootloaders skip this)</span></span>
+          </label>
+          <label class="opt">
+            <input id="optVerify" type="checkbox" checked />
+            <span>Verify flash after writing
+              <span class="hint">(mirrors avrdude's verify phase)</span></span>
+          </label>
+        </div>
+      </details>
       <div class="actions">
         <button id="flashBtn" class="btn-primary" disabled>Connect &amp; Flash</button>
         <button id="clearBtn" class="btn-ghost">Clear Log</button>
