@@ -31,11 +31,16 @@
   .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }
   header h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.3px; }
   header p { margin: 0; color: var(--muted); font-size: 14px; }
-  .cmd {
-    margin-top: 14px; font-family: var(--mono); font-size: 12.5px;
-    background: #0b0f14; border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 12px; color: #9fd3ff; overflow-x: auto; white-space: nowrap;
+  .howto {
+    margin-top: 16px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px;
   }
+  .howto h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: 0.6px; color: var(--muted); font-weight: 600; }
+  .howto ol { margin: 0; padding-left: 22px; }
+  .howto li { font-size: 14px; margin: 6px 0; }
+  .howto a { color: var(--accent); }
+  .howto a:hover { text-decoration: underline; }
   .card {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 14px; padding: 20px; margin-top: 20px;
@@ -126,8 +131,18 @@
 <div class="wrap">
   <header>
     <h1>Pebble HF Web Firmware Updater</h1>
-    <p>Flash an Intel HEX file to an ATmega328P over USB-serial using STK500&nbsp;v1 — in the browser.</p>
-    <div class="cmd">avrdude -c stk500v1 -p m328p -P &lt;serial&gt; -b 19200 -U flash:w:firmware.hex</div>
+    <p>Update your <a href="https://pebblehf.com" target="_blank" rel="noopener" style="color:var(--accent)">Pebble&nbsp;HF</a> firmware right from your browser — no software to install.</p>
+    <div class="howto">
+      <h3>How it works</h3>
+      <ol>
+        <li><b>Download the firmware</b> (a <code>.hex</code> file) from the
+          <a href="https://github.com/mspiceland/usdx-pebblehf/releases" target="_blank" rel="noopener">releases page</a>.</li>
+        <li><b>Plug your STK500v1 adapter into your computer</b>, then connect the other end to your Pebble&nbsp;HF — making sure the pinout orientation is correct.</li>
+        <li><b>Drag &amp; drop the <code>.hex</code> file</b> onto the box below (or click to browse).</li>
+        <li><b>Click "Connect &amp; Flash"</b> and pick your adapter from the browser's list.</li>
+        <li><b>Wait for the Writing and Verifying bars to finish</b> — that's it.</li>
+      </ol>
+    </div>
   </header>
 
   <div id="unsupported" class="nosupport" style="display:none;">
