@@ -75,6 +75,14 @@
   .opt { display: flex; align-items: center; gap: 10px; font-size: 14px; }
   .opt input { width: 16px; height: 16px; accent-color: var(--accent); }
   .opt .hint { color: var(--muted); font-size: 12.5px; }
+  .opt-select { justify-content: space-between; }
+  .opt-select > span { display: flex; flex-direction: column; }
+  .opt-select select {
+    background: #0b0f14; color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font-size: 14px; font-family: var(--mono);
+    cursor: pointer; flex: 0 0 auto;
+  }
+  .opt-select select:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .actions { display: flex; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
   button {
@@ -170,6 +178,17 @@
       <details class="adv">
         <summary>Advanced options</summary>
         <div class="options">
+          <label class="opt opt-select">
+            <span>Baud rate
+              <span class="hint">(19200 = STK500v1 default / Arduino-as-ISP; 9600 for slow/legacy targets; 115200 for Optiboot)</span></span>
+            <select id="optBaud">
+              <option value="9600">9600</option>
+              <option value="19200" selected>19200</option>
+              <option value="38400">38400</option>
+              <option value="57600">57600</option>
+              <option value="115200">115200</option>
+            </select>
+          </label>
           <label class="opt">
             <input id="optReset" type="checkbox" checked />
             <span>Toggle DTR/RTS to auto-reset the board before syncing
@@ -229,7 +248,7 @@
   </main>
 
   <footer>
-    STK500v1 over Web Serial · 19200 baud 8N1 · ATmega328P (32&nbsp;KB flash, 128-byte page, sig 1E&nbsp;95&nbsp;0F)
+    STK500v1 over Web Serial · 8N1, selectable baud (default 19200) · ATmega328P (32&nbsp;KB flash, 128-byte page, sig 1E&nbsp;95&nbsp;0F)
   </footer>
 </div>
 
@@ -266,7 +285,7 @@ const DEV = {
   signature: [0x1E, 0x95, 0x0F],
 };
 
-const BAUD = 19200;
+const DEFAULT_BAUD = 19200; // STK500v1 default (matches avrdude -b 19200)
 const CMD_TIMEOUT = 1500;   // ms per command
 const SYNC_RETRIES = 5;
 
@@ -415,8 +434,8 @@ class Transport {
     this._loop = null;
     this._closed = false;
   }
-  async open() {
-    await this.port.open({ baudRate: BAUD, dataBits: 8, stopBits: 1, parity: "none", bufferSize: 4096 });
+  async open(baudRate = DEFAULT_BAUD) {
+    await this.port.open({ baudRate, dataBits: 8, stopBits: 1, parity: "none", bufferSize: 4096 });
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
     this._loop = this._readLoop();
@@ -597,6 +616,7 @@ async function flashFirmware() {
   clearBanner();
   resetProgress();
 
+  const baudRate = parseInt($("optBaud").value, 10) || DEFAULT_BAUD;
   const doReset = $("optReset").checked;
   const doSetDevice = $("optSetDevice").checked;
   const doErase = $("optErase").checked;
@@ -613,8 +633,8 @@ async function flashFirmware() {
     log("Requesting serial port…");
     port = await navigator.serial.requestPort();
     tr = new Transport(port);
-    await tr.open();
-    log(`Port opened @ ${BAUD} baud, 8N1.`, "ok");
+    await tr.open(baudRate);
+    log(`Port opened @ ${baudRate} baud, 8N1.`, "ok");
 
     // Auto-reset
     if (doReset) {
@@ -739,7 +759,7 @@ function setBusy(b) {
   fileInput.disabled = b;
   dropEl.style.pointerEvents = b ? "none" : "auto";
   dropEl.style.opacity = b ? "0.6" : "1";
-  ["optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
+  ["optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
   flashBtn.textContent = b ? "Flashing…" : "Connect & Flash";
 }
 
