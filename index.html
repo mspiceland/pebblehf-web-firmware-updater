@@ -206,8 +206,8 @@
           </label>
           <label class="opt">
             <input id="optCheckSig" type="checkbox" checked />
-            <span>Read &amp; verify device signature <code>1E 95 0F</code>
-              <span class="hint">(abort on mismatch; some bootloaders skip this)</span></span>
+            <span>Auto-detect device from signature
+              <span class="hint">(reads the chip signature to set page size &amp; flash size; aborts on an unknown chip. Uncheck to force ATmega328P settings)</span></span>
           </label>
           <label class="opt">
             <input id="optVerify" type="checkbox" checked />
@@ -277,13 +277,38 @@ const STK = {
   FLASH_MEM:     0x46, // 'F'
 };
 
-// ATmega328P device parameters
-const DEV = {
-  name: "ATmega328P",
-  pageSize: 128,        // bytes per flash page
-  flashSize: 32768,     // 32 KB
-  signature: [0x1E, 0x95, 0x0F],
+// Known AVR devices, keyed by their 3-byte signature (lowercase hex string).
+// Page size and flash size are fixed datasheet values — they cannot be read
+// from the chip, so detection = read signature + look it up here.
+// `extAddr: true` marks parts whose flash exceeds 64K words (>128 KB) and thus
+// require STK500 extended addressing, which this tool does not implement.
+const DEVICES = {
+  "1e950f": { name: "ATmega328P",  pageSize: 128, flashSize: 32768  },
+  "1e9514": { name: "ATmega328",   pageSize: 128, flashSize: 32768  },
+  "1e9516": { name: "ATmega328PB", pageSize: 128, flashSize: 32768  },
+  "1e9406": { name: "ATmega168",   pageSize: 128, flashSize: 16384  },
+  "1e940b": { name: "ATmega168PA", pageSize: 128, flashSize: 16384  },
+  "1e9307": { name: "ATmega8",     pageSize: 64,  flashSize: 8192   },
+  "1e930a": { name: "ATmega88PA",  pageSize: 64,  flashSize: 8192   },
+  "1e930f": { name: "ATmega88P",   pageSize: 64,  flashSize: 8192   },
+  "1e9587": { name: "ATmega32U4",  pageSize: 128, flashSize: 32768  },
+  "1e9608": { name: "ATmega640",   pageSize: 256, flashSize: 65536  },
+  "1e9703": { name: "ATmega1280",  pageSize: 256, flashSize: 131072 },
+  "1e9704": { name: "ATmega1281",  pageSize: 256, flashSize: 131072 },
+  "1e9705": { name: "ATmega1284P", pageSize: 256, flashSize: 131072 },
+  "1e9801": { name: "ATmega2560",  pageSize: 256, flashSize: 262144, extAddr: true },
+  "1e9802": { name: "ATmega2561",  pageSize: 256, flashSize: 262144, extAddr: true },
 };
+
+// Default / primary target: ATmega328P. Used when auto-detect is off or when
+// the bootloader doesn't support reading the signature.
+const DEFAULT_DEVICE = { signature: "1e950f", ...DEVICES["1e950f"] };
+
+const MAX_FLASH = 262144;   // hard cap for HEX parsing sanity (largest table entry)
+
+function sigKey(bytes) {
+  return bytes.slice(0, 3).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 const DEFAULT_BAUD = 19200; // STK500v1 default (matches avrdude -b 19200)
 const CMD_TIMEOUT = 1500;   // ms per command
@@ -410,12 +435,13 @@ function parseIntelHex(text) {
 
   if (dataRecords === 0) throw new Error("No data records (type 00) found");
   if (!sawEOF) throw new Error("No EOF record (type 01) found");
-  if (maxAddr > DEV.flashSize)
-    throw new Error(`Firmware (${maxAddr} bytes) exceeds ${DEV.name} flash (${DEV.flashSize} bytes)`);
+  if (maxAddr > MAX_FLASH)
+    throw new Error(`Firmware (${maxAddr} bytes) exceeds the largest supported flash (${MAX_FLASH} bytes)`);
 
-  // Build flat buffer padded to whole pages, filled with 0xFF.
-  const totalSize = Math.ceil(maxAddr / DEV.pageSize) * DEV.pageSize;
-  const buf = new Uint8Array(totalSize).fill(0xff);
+  // Build a flat byte buffer (length = highest used address), gaps filled with
+  // 0xFF. Page-padding and the per-device flash-size check happen at flash time,
+  // once the target's page size is known from its signature.
+  const buf = new Uint8Array(maxAddr).fill(0xff);
   for (const c of chunks) {
     for (let k = 0; k < c.bytes.length; k++) buf[c.addr + k] = c.bytes[k];
   }
@@ -535,8 +561,12 @@ async function stkGetSync(tr) {
   throw new Error(`could not get in sync after ${SYNC_RETRIES} attempts (${lastErr ? lastErr.message : "no response"})`);
 }
 
-// STK_SET_DEVICE — values modeled on avrdude's m328p config.
-async function stkSetDevice(tr) {
+// STK_SET_DEVICE — modeled on avrdude's config. The flash page size and total
+// flash size are taken from the detected device, because Arduino-as-ISP uses the
+// reported page size to decide where to commit flash page writes.
+async function stkSetDevice(tr, dev) {
+  const ps = dev.pageSize;
+  const fs = dev.flashSize;
   const cmd = [
     STK.SET_DEVICE,
     0x86,       // devicecode (generic)
@@ -547,10 +577,10 @@ async function stkSetDevice(tr) {
     0x01,       // selftimed
     0x01,       // lockbytes
     0x03,       // fusebytes
-    0xff, 0xff, 0xff, 0xff, // flashpoll/eeprompoll
-    0x00, 0x80, // pagesize hi/lo = 128
-    0x04, 0x00, // eepromsize
-    0x00, 0x00, 0x80, 0x00, // flashsize = 0x8000 (32768)
+    0xff, 0xff, 0xff, 0xff,           // flashpoll/eeprompoll
+    (ps >> 8) & 0xff, ps & 0xff,      // pagesize hi/lo
+    0x04, 0x00,                       // eepromsize
+    (fs >> 24) & 0xff, (fs >> 16) & 0xff, (fs >> 8) & 0xff, fs & 0xff, // flashsize (4 bytes)
   ];
   await stkTransact(tr, cmd);
 }
@@ -623,9 +653,11 @@ async function flashFirmware() {
   const doCheckSig = $("optCheckSig").checked;
   const doVerify = $("optVerify").checked;
 
-  const data = parsedFirmware.data;
-  const total = data.length;
-  const pageSize = DEV.pageSize;
+  const srcData = parsedFirmware.data;   // filled to highest used address
+  const used = parsedFirmware.used;
+
+  let device = DEFAULT_DEVICE;           // resolved after signature read
+  let pageSize, total, flashData;        // set once the device is known
 
   let port = null, tr = null;
 
@@ -647,10 +679,11 @@ async function flashFirmware() {
     // Sync
     await stkGetSync(tr);
 
-    // Optional SET_DEVICE
+    // Optional SET_DEVICE (initial, with default params; re-sent after the
+    // device is detected if its page/flash size differs).
     if (doSetDevice) {
       log("Sending STK_SET_DEVICE…");
-      await stkSetDevice(tr);
+      await stkSetDevice(tr, DEFAULT_DEVICE);
       log("STK_SET_DEVICE acknowledged.", "ok");
     }
 
@@ -659,21 +692,54 @@ async function flashFirmware() {
     await stkEnterProgmode(tr);
     log("In programming mode.", "ok");
 
-    // Signature check
+    // Signature read + device auto-detection
     if (doCheckSig) {
+      let sig = null;
       try {
-        const sig = await stkReadSignature(tr);
+        sig = await stkReadSignature(tr);
+      } catch (e) {
+        log(`Signature read not supported by bootloader (${e.message}). ` +
+            `Falling back to ${DEFAULT_DEVICE.name} settings.`, "warn");
+      }
+      if (sig) {
         const sigStr = sig.map(hex2).join(" ");
         log(`Device signature: ${sigStr}`);
-        const match = sig.length === 3 && sig.every((b, i) => b === DEV.signature[i]);
-        if (!match) {
-          throw new Error(`signature mismatch — expected 1E 95 0F for ${DEV.name}, got ${sigStr}`);
+        const found = DEVICES[sigKey(sig)];
+        if (!found) {
+          throw new Error(
+            `unknown device signature ${sigStr} — not in the supported list. ` +
+            `Page size can't be guessed safely. Uncheck "Auto-detect device" to ` +
+            `force ${DEFAULT_DEVICE.name} settings if you're certain.`);
         }
-        log(`Signature matches ${DEV.name}.`, "ok");
-      } catch (e) {
-        if (/mismatch/.test(e.message)) throw e;       // hard abort on wrong chip
-        log(`Signature read not supported by bootloader (${e.message}). Continuing.`, "warn");
+        if (found.extAddr) {
+          throw new Error(
+            `${found.name} (${sigStr}) needs extended flash addressing (>128 KB), ` +
+            `which this tool doesn't support yet.`);
+        }
+        device = { signature: sigKey(sig), ...found };
+        log(`Detected ${device.name} — ${device.pageSize}-byte page, ` +
+            `${(device.flashSize / 1024)} KB flash.`, "ok");
       }
+    } else {
+      log(`Auto-detect disabled — using ${DEFAULT_DEVICE.name} settings ` +
+          `(${DEFAULT_DEVICE.pageSize}-byte page, ${DEFAULT_DEVICE.flashSize / 1024} KB).`, "warn");
+    }
+
+    // Now that the device is known, validate size and build the padded image.
+    pageSize = device.pageSize;
+    if (used > device.flashSize) {
+      throw new Error(
+        `firmware (${used} bytes) exceeds ${device.name} flash (${device.flashSize} bytes)`);
+    }
+    total = Math.ceil(used / pageSize) * pageSize;   // pad to whole pages
+    flashData = new Uint8Array(total).fill(0xff);
+    flashData.set(srcData);
+
+    // Re-send SET_DEVICE with the detected page/flash size so an Arduino-as-ISP
+    // programmer commits flash pages on the correct boundary.
+    if (doSetDevice && device.signature !== DEFAULT_DEVICE.signature) {
+      log(`Updating STK_SET_DEVICE for ${device.name} (${pageSize}-byte page)…`);
+      await stkSetDevice(tr, device);
     }
 
     /* ---------- CHIP ERASE ---------- */
@@ -691,10 +757,10 @@ async function flashFirmware() {
     }
 
     /* ---------- WRITE PHASE ---------- */
-    log(`Writing ${total} bytes (${total / pageSize} pages)…`);
+    log(`Writing ${total} bytes (${total / pageSize} × ${pageSize}-byte pages)…`);
     const wStart = performance.now();
     for (let addr = 0; addr < total; addr += pageSize) {
-      const page = data.subarray(addr, addr + pageSize);
+      const page = flashData.subarray(addr, addr + pageSize);
       await stkLoadAddress(tr, addr);
       await stkProgPage(tr, page);
       setProgress("write", addr + page.length, total, wStart);
@@ -711,10 +777,10 @@ async function flashFirmware() {
         await stkLoadAddress(tr, addr);
         const readBack = await stkReadPage(tr, len);
         for (let k = 0; k < len; k++) {
-          if (readBack[k] !== data[addr + k]) {
+          if (readBack[k] !== flashData[addr + k]) {
             throw new Error(
               `verify mismatch at 0x${(addr + k).toString(16).toUpperCase()}: ` +
-              `wrote 0x${hex2(data[addr + k])}, read 0x${hex2(readBack[k])}`
+              `wrote 0x${hex2(flashData[addr + k])}, read 0x${hex2(readBack[k])}`
             );
           }
         }
@@ -770,15 +836,13 @@ function handleFile(file) {
     try {
       const fw = parseIntelHex(String(reader.result));
       parsedFirmware = fw;
-      const pages = fw.data.length / DEV.pageSize;
       dropEl.classList.add("has-file");
       dropEl.querySelector(".big").textContent = file.name;
       dropEl.querySelector(".sub").textContent = "valid Intel HEX — click to choose another";
       fileInfoEl.style.display = "block";
       fileInfoEl.innerHTML =
-        `Parsed OK · <b>${fw.used}</b> bytes used · padded to <b>${fw.data.length}</b> bytes ` +
-        `(<b>${pages}</b> × ${DEV.pageSize}-byte pages)`;
-      log(`Loaded "${file.name}": ${fw.used} bytes, ${pages} pages.`, "ok");
+        `Parsed OK · <b>${fw.used}</b> bytes · page layout set from the detected device at flash time.`;
+      log(`Loaded "${file.name}": ${fw.used} bytes.`, "ok");
       flashBtn.disabled = busy;
       clearBanner();
     } catch (e) {
