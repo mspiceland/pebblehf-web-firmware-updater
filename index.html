@@ -154,6 +154,11 @@
             <span class="hint">(helps stricter bootloaders)</span></span>
         </label>
         <label class="opt">
+          <input id="optErase" type="checkbox" checked />
+          <span>Chip erase before writing
+            <span class="hint">(matches avrdude's default; required for Arduino-as-ISP / STK500 — flash must be erased before bits can be set)</span></span>
+        </label>
+        <label class="opt">
           <input id="optCheckSig" type="checkbox" checked />
           <span>Read &amp; verify device signature <code>1E 95 0F</code>
             <span class="hint">(abort on mismatch; some bootloaders skip this)</span></span>
@@ -217,6 +222,7 @@ const STK = {
   SET_DEVICE_EXT:0x45,
   ENTER_PROGMODE:0x50, // Cmnd_STK_ENTER_PROGMODE
   LEAVE_PROGMODE:0x51, // Cmnd_STK_LEAVE_PROGMODE
+  UNIVERSAL:     0x56, // Cmnd_STK_UNIVERSAL (issue raw ISP instruction)
   LOAD_ADDRESS:  0x55, // Cmnd_STK_LOAD_ADDRESS
   PROG_PAGE:     0x64, // Cmnd_STK_PROG_PAGE
   READ_PAGE:     0x74, // Cmnd_STK_READ_PAGE
@@ -505,6 +511,16 @@ async function stkSetDevice(tr) {
 async function stkEnterProgmode(tr) { await stkTransact(tr, [STK.ENTER_PROGMODE]); }
 async function stkLeaveProgmode(tr) { await stkTransact(tr, [STK.LEAVE_PROGMODE]); }
 
+// Chip erase via STK_UNIVERSAL issuing the ISP chip-erase instruction
+// (0xAC 0x80 0x00 0x00) — exactly what avrdude does by default before
+// writing flash. On true ISP / Arduino-as-ISP this performs the real
+// erase that lets 0->1 bit transitions take effect; on bootloaders that
+// auto-erase each page it is a harmless no-op.
+async function stkChipErase(tr) {
+  await stkTransact(tr, [STK.UNIVERSAL, 0xAC, 0x80, 0x00, 0x00], 1);
+  await sleep(50); // tCHIPERASE — give the device time to finish
+}
+
 async function stkReadSignature(tr) {
   return await stkTransact(tr, [STK.READ_SIGN], 3);
 }
@@ -555,6 +571,7 @@ async function flashFirmware() {
 
   const doReset = $("optReset").checked;
   const doSetDevice = $("optSetDevice").checked;
+  const doErase = $("optErase").checked;
   const doCheckSig = $("optCheckSig").checked;
   const doVerify = $("optVerify").checked;
 
@@ -609,6 +626,20 @@ async function flashFirmware() {
         if (/mismatch/.test(e.message)) throw e;       // hard abort on wrong chip
         log(`Signature read not supported by bootloader (${e.message}). Continuing.`, "warn");
       }
+    }
+
+    /* ---------- CHIP ERASE ---------- */
+    if (doErase) {
+      log("Chip erase (STK_UNIVERSAL AC 80 00 00)…");
+      try {
+        await stkChipErase(tr);
+        log("Chip erase acknowledged.", "ok");
+      } catch (e) {
+        // Bootloaders that auto-erase per page may not implement UNIVERSAL.
+        log(`Chip erase not supported (${e.message}). Relying on per-page erase.`, "warn");
+      }
+    } else {
+      log("Chip erase skipped — only do this if your bootloader auto-erases each page.", "warn");
     }
 
     /* ---------- WRITE PHASE ---------- */
@@ -680,7 +711,7 @@ function setBusy(b) {
   fileInput.disabled = b;
   dropEl.style.pointerEvents = b ? "none" : "auto";
   dropEl.style.opacity = b ? "0.6" : "1";
-  ["optReset", "optSetDevice", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
+  ["optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
   flashBtn.textContent = b ? "Flashing…" : "Connect & Flash";
 }
 
