@@ -83,6 +83,9 @@
     cursor: pointer; flex: 0 0 auto;
   }
   .opt-select select:disabled { opacity: 0.45; cursor: not-allowed; }
+  .fw-pick { gap: 16px; }
+  .fw-pick select { min-width: 170px; }
+  #drop { margin-top: 14px; }
 
   .actions { display: flex; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
   button {
@@ -143,10 +146,9 @@
     <div class="howto">
       <h3>How it works</h3>
       <ol>
-        <li><b>Download the firmware</b> (a <code>.hex</code> file) from the
-          <a href="https://github.com/mspiceland/usdx-pebblehf/releases" target="_blank" rel="noopener">releases page</a>.</li>
+        <li><b>Pick a firmware version</b> from the dropdown below — it downloads automatically.
+          (Or choose <i>Upload my own .hex file</i> to use your own.)</li>
         <li><b>Plug your STK500v1 adapter into your computer</b>, then connect the other end to your Pebble&nbsp;HF — making sure the pinout orientation is correct.</li>
-        <li><b>Drag &amp; drop the <code>.hex</code> file</b> onto the box below (or click to browse).</li>
         <li><b>Click "Connect &amp; Flash"</b> and pick your adapter from the browser's list.</li>
         <li><b>Wait for the Writing and Verifying bars to finish</b> — that's it.</li>
       </ol>
@@ -163,8 +165,13 @@
   <main id="app">
     <!-- File -->
     <div class="card">
-      <h2>1 · Firmware (.hex)</h2>
-      <div id="drop">
+      <h2>1 · Firmware</h2>
+      <label class="opt opt-select fw-pick">
+        <span>Firmware version
+          <span class="hint">(pick a known-good release, or upload your own <code>.hex</code>)</span></span>
+        <select id="fwSelect"></select>
+      </label>
+      <div id="drop" style="display:none;">
         <div class="big">Drop your <code>.hex</code> file here</div>
         <div class="sub">or click to browse</div>
         <input id="file" type="file" accept=".hex,.ihex,.eep,text/plain" hidden />
@@ -314,6 +321,18 @@ const DEFAULT_BAUD = 19200; // STK500v1 default (matches avrdude -b 19200)
 const CMD_TIMEOUT = 1500;   // ms per command
 const SYNC_RETRIES = 5;
 
+// Known-good firmware releases bundled in this repo under /firmware. They are
+// fetched same-origin (relative URL) so there are no CORS issues — GitHub's
+// release-asset host does not send CORS headers, so we ship the .hex here.
+// To add a version: drop its .hex in /firmware and add an entry below (newest first).
+const FIRMWARES = [
+  {
+    label: "v1.0.7 (latest)",
+    name: "usdx.ino.hex.v1.0.7",
+    url: "firmware/usdx.ino.hex.v1.0.7",
+  },
+];
+
 /* ============================================================
  * DOM helpers
  * ============================================================ */
@@ -321,6 +340,7 @@ const $ = (id) => document.getElementById(id);
 const dropEl = $("drop");
 const fileInput = $("file");
 const fileInfoEl = $("fileInfo");
+const fwSelect = $("fwSelect");
 const flashBtn = $("flashBtn");
 const clearBtn = $("clearBtn");
 const logEl = $("log");
@@ -825,42 +845,108 @@ function setBusy(b) {
   fileInput.disabled = b;
   dropEl.style.pointerEvents = b ? "none" : "auto";
   dropEl.style.opacity = b ? "0.6" : "1";
-  ["optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
+  ["fwSelect", "optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
   flashBtn.textContent = b ? "Flashing…" : "Connect & Flash";
+}
+
+// Parse HEX text and reflect the result in the UI. Shared by file upload and
+// URL download. Returns true on success.
+function parseHexText(text, displayName) {
+  try {
+    const fw = parseIntelHex(text);
+    parsedFirmware = fw;
+    fileInfoEl.style.display = "block";
+    fileInfoEl.innerHTML =
+      `Loaded <b>${displayName}</b> · <b>${fw.used}</b> bytes · ` +
+      `page layout set from the detected device at flash time.`;
+    log(`Loaded "${displayName}": ${fw.used} bytes.`, "ok");
+    flashBtn.disabled = busy;
+    clearBanner();
+    return true;
+  } catch (e) {
+    parsedFirmware = null;
+    fileInfoEl.style.display = "block";
+    fileInfoEl.innerHTML = `<span style="color:var(--red)">Invalid Intel HEX: ${e.message}</span>`;
+    flashBtn.disabled = true;
+    log(`Failed to parse "${displayName}": ${e.message}`, "err");
+    return false;
+  }
 }
 
 function handleFile(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      const fw = parseIntelHex(String(reader.result));
-      parsedFirmware = fw;
+    if (parseHexText(String(reader.result), file.name)) {
       dropEl.classList.add("has-file");
       dropEl.querySelector(".big").textContent = file.name;
       dropEl.querySelector(".sub").textContent = "valid Intel HEX — click to choose another";
-      fileInfoEl.style.display = "block";
-      fileInfoEl.innerHTML =
-        `Parsed OK · <b>${fw.used}</b> bytes · page layout set from the detected device at flash time.`;
-      log(`Loaded "${file.name}": ${fw.used} bytes.`, "ok");
-      flashBtn.disabled = busy;
-      clearBanner();
-    } catch (e) {
-      parsedFirmware = null;
+    } else {
       dropEl.classList.remove("has-file");
-      fileInfoEl.style.display = "block";
-      fileInfoEl.innerHTML = `<span style="color:var(--red)">Invalid Intel HEX: ${e.message}</span>`;
-      flashBtn.disabled = true;
-      log(`Failed to parse "${file.name}": ${e.message}`, "err");
     }
   };
   reader.onerror = () => log("Could not read file.", "err");
   reader.readAsText(file);
 }
 
+// Download a known-good firmware release and parse it.
+async function loadFirmwareFromUrl(fw) {
+  parsedFirmware = null;
+  flashBtn.disabled = true;
+  fileInfoEl.style.display = "block";
+  fileInfoEl.innerHTML = `Downloading <b>${fw.label}</b>…`;
+  log(`Downloading firmware "${fw.name}"…`);
+  try {
+    const resp = await fetch(fw.url, { redirect: "follow" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    parseHexText(await resp.text(), fw.name);
+  } catch (e) {
+    parsedFirmware = null;
+    flashBtn.disabled = true;
+    fileInfoEl.style.display = "block";
+    fileInfoEl.innerHTML =
+      `<span style="color:var(--red)">Couldn't download firmware: ${e.message}.</span> ` +
+      `<a href="${fw.url}" target="_blank" rel="noopener" style="color:var(--accent)">Download it manually</a>, ` +
+      `then choose “Upload my own .hex file”.`;
+    log(`Download failed: ${e.message}`, "err");
+  }
+}
+
+// Build the firmware dropdown: known releases + an "upload" option.
+function populateFirmwareSelect() {
+  FIRMWARES.forEach((fw, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = fw.label;
+    fwSelect.appendChild(opt);
+  });
+  const up = document.createElement("option");
+  up.value = "__upload__";
+  up.textContent = "Upload my own .hex file";
+  fwSelect.appendChild(up);
+}
+
+function onFwSelectChange() {
+  clearBanner();
+  if (fwSelect.value === "__upload__") {
+    dropEl.style.display = "block";
+    dropEl.classList.remove("has-file");
+    dropEl.querySelector(".big").innerHTML = "Drop your <code>.hex</code> file here";
+    dropEl.querySelector(".sub").textContent = "or click to browse";
+    parsedFirmware = null;
+    flashBtn.disabled = true;
+    fileInfoEl.style.display = "none";
+    fileInfoEl.innerHTML = "";
+  } else {
+    dropEl.style.display = "none";
+    loadFirmwareFromUrl(FIRMWARES[parseInt(fwSelect.value, 10)]);
+  }
+}
+
 // Dropzone events
 dropEl.addEventListener("click", () => { if (!busy) fileInput.click(); });
 fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+fwSelect.addEventListener("change", () => { if (!busy) onFwSelectChange(); });
 ["dragenter", "dragover"].forEach((ev) =>
   dropEl.addEventListener(ev, (e) => { e.preventDefault(); if (!busy) dropEl.classList.add("drag"); }));
 ["dragleave", "drop"].forEach((ev) =>
@@ -890,7 +976,9 @@ if (navigator.serial) {
     $("app").style.display = "none";
     return;
   }
-  log("Ready. Load a .hex file, then click Connect & Flash.", "info");
+  populateFirmwareSelect();
+  log("Ready. Pick a firmware version (or upload your own), then click Connect & Flash.", "info");
+  onFwSelectChange();   // load the default-selected firmware
 })();
 </script>
 </body>

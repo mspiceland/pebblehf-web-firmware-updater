@@ -34,8 +34,12 @@ build/
 .env.local
 .env.*.local
 
-# Firmware artifacts (don't commit user .hex files)
+# Firmware artifacts (don't commit stray/user .hex files)
 *.hex
 *.eep
 *.bin
 *.elf
+
+# ...but DO track the firmware we bundle/ship with the tool
+!firmware/
+!firmware/**
