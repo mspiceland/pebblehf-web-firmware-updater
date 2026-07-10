@@ -182,7 +182,7 @@
     <!-- Options + Flash -->
     <div class="card">
       <h2>2 · Flash</h2>
-      <details class="adv">
+      <details class="adv" id="advSection">
         <summary>Advanced options</summary>
         <div class="options">
           <label class="opt opt-select">
@@ -255,7 +255,7 @@
   </main>
 
   <footer>
-    STK500v1 over Web Serial · 8N1, selectable baud (default 19200) · ATmega328P (32&nbsp;KB flash, 128-byte page, sig 1E&nbsp;95&nbsp;0F)
+    STK500v1 over Web Serial · 8N1 @ 19200 baud · ATmega328P (32&nbsp;KB flash, 128-byte page, sig 1E&nbsp;95&nbsp;0F)
   </footer>
 </div>
 
@@ -975,6 +975,14 @@ if (navigator.serial) {
     $("unsupported").style.display = "block";
     $("app").style.display = "none";
     return;
+  }
+  // Advanced options are debug-only: 115200 can end up reflashing the
+  // programmer itself instead of the target. Hidden unless ?admin=true.
+  const isAdmin = new URLSearchParams(location.search).get("admin") === "true";
+  if (!isAdmin) {
+    $("advSection").style.display = "none";
+    $("optBaud").value = String(DEFAULT_BAUD);
+    ["optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).checked = true; });
   }
   populateFirmwareSelect();
   log("Ready. Pick a firmware version (or upload your own), then click Connect & Flash.", "info");
