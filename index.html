@@ -221,6 +221,11 @@
             <span>Verify flash after writing
               <span class="hint">(mirrors avrdude's verify phase)</span></span>
           </label>
+          <label class="opt">
+            <input id="optSkipBoot" type="checkbox" />
+            <span>Skip bootloader region — don't write/verify 0x7E00+
+              <span class="hint">(for re-flashing a programmer through its own Optiboot at 115200: Optiboot can't rewrite itself, so a with_bootloader hex fails on the last pages unless they're skipped)</span></span>
+          </label>
         </div>
       </details>
       <div class="actions">
@@ -672,6 +677,7 @@ async function flashFirmware() {
   const doErase = $("optErase").checked;
   const doCheckSig = $("optCheckSig").checked;
   const doVerify = $("optVerify").checked;
+  const skipBoot = $("optSkipBoot").checked;
 
   const srcData = parsedFirmware.data;   // filled to highest used address
   const used = parsedFirmware.used;
@@ -754,6 +760,18 @@ async function flashFirmware() {
     total = Math.ceil(used / pageSize) * pageSize;   // pad to whole pages
     flashData = new Uint8Array(total).fill(0xff);
     flashData.set(srcData);
+
+    // Optiboot lives in the last 512 bytes (0x7E00 on an ATmega328P) and
+    // cannot erase/rewrite its own section over serial.
+    if (skipBoot) {
+      const bootStart = device.flashSize - 512;
+      if (total > bootStart) {
+        log(`Skipping bootloader region: stopping at 0x${bootStart.toString(16).toUpperCase()} ` +
+            `(${total - bootStart} bytes of the image not written).`, "warn");
+        total = bootStart;
+        flashData = flashData.subarray(0, total);
+      }
+    }
 
     // Re-send SET_DEVICE with the detected page/flash size so an Arduino-as-ISP
     // programmer commits flash pages on the correct boundary.
@@ -845,7 +863,7 @@ function setBusy(b) {
   fileInput.disabled = b;
   dropEl.style.pointerEvents = b ? "none" : "auto";
   dropEl.style.opacity = b ? "0.6" : "1";
-  ["fwSelect", "optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).disabled = b; });
+  ["fwSelect", "optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify", "optSkipBoot"].forEach((id) => { $(id).disabled = b; });
   flashBtn.textContent = b ? "Flashing…" : "Connect & Flash";
 }
 
@@ -983,6 +1001,7 @@ if (navigator.serial) {
     $("advSection").style.display = "none";
     $("optBaud").value = String(DEFAULT_BAUD);
     ["optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).checked = true; });
+    $("optSkipBoot").checked = false;
   }
   populateFirmwareSelect();
   log("Ready. Pick a firmware version (or upload your own), then click Connect & Flash.", "info");
