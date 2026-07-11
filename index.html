@@ -217,6 +217,11 @@
               <span class="hint">(reads the chip signature to set page size &amp; flash size; aborts on an unknown chip. Uncheck to force ATmega328P settings)</span></span>
           </label>
           <label class="opt">
+            <input id="optSigUniversal" type="checkbox" checked />
+            <span>Read signature via raw ISP instruction (STK_UNIVERSAL)
+              <span class="hint">(like avrdude — a bootloader can't fake this, so it blocks accidentally flashing the programmer itself. Uncheck only when deliberately flashing through a bootloader, e.g. programmer recovery or putting ArduinoISP on an Uno)</span></span>
+          </label>
+          <label class="opt">
             <input id="optVerify" type="checkbox" checked />
             <span>Verify flash after writing
               <span class="hint">(mirrors avrdude's verify phase)</span></span>
@@ -627,6 +632,21 @@ async function stkReadSignature(tr) {
   return await stkTransact(tr, [STK.READ_SIGN], 3);
 }
 
+// Read the signature via raw ISP instructions (0x30 0x00 addr 0x00) through
+// STK_UNIVERSAL, exactly as avrdude does. A real ISP programmer forwards each
+// instruction to the target and returns the true signature byte; Optiboot
+// stubs UNIVERSAL and returns 0x00, so a bootloader cannot fake its way past
+// this check the way it can with STK_READ_SIGN (which it answers with a
+// compiled-in signature).
+async function stkReadSignatureUniversal(tr) {
+  const sig = [];
+  for (let i = 0; i < 3; i++) {
+    const [b] = await stkTransact(tr, [STK.UNIVERSAL, 0x30, 0x00, i, 0x00], 1);
+    sig.push(b);
+  }
+  return sig;
+}
+
 // Set the WORD address (byteAddr/2), little-endian.
 async function stkLoadAddress(tr, byteAddr) {
   const word = byteAddr >> 1;
@@ -676,6 +696,7 @@ async function flashFirmware() {
   const doSetDevice = $("optSetDevice").checked;
   const doErase = $("optErase").checked;
   const doCheckSig = $("optCheckSig").checked;
+  const useUniversalSig = $("optSigUniversal").checked;
   const doVerify = $("optVerify").checked;
   const skipBoot = $("optSkipBoot").checked;
 
@@ -721,11 +742,27 @@ async function flashFirmware() {
     // Signature read + device auto-detection
     if (doCheckSig) {
       let sig = null;
-      try {
-        sig = await stkReadSignature(tr);
-      } catch (e) {
-        log(`Signature read not supported by bootloader (${e.message}). ` +
-            `Falling back to ${DEFAULT_DEVICE.name} settings.`, "warn");
+      if (useUniversalSig) {
+        sig = await stkReadSignatureUniversal(tr);
+        const sigStr = sig.map(hex2).join(" ");
+        if (sig.every((b) => b === 0x00)) {
+          throw new Error(
+            `signature via ISP instruction read all zeros (${sigStr}) — a bootloader is ` +
+            `answering, not an ISP programmer. If the baud rate is 115200 you are talking ` +
+            `to the programmer itself; use 19200 to program a target.`);
+        }
+        if (sig.every((b) => b === 0xff)) {
+          throw new Error(
+            `signature via ISP instruction read all 0xFF (${sigStr}) — no target answered. ` +
+            `Check the ISP cable and target power.`);
+        }
+      } else {
+        try {
+          sig = await stkReadSignature(tr);
+        } catch (e) {
+          log(`Signature read not supported by bootloader (${e.message}). ` +
+              `Falling back to ${DEFAULT_DEVICE.name} settings.`, "warn");
+        }
       }
       if (sig) {
         const sigStr = sig.map(hex2).join(" ");
@@ -745,6 +782,10 @@ async function flashFirmware() {
         device = { signature: sigKey(sig), ...found };
         log(`Detected ${device.name} — ${device.pageSize}-byte page, ` +
             `${(device.flashSize / 1024)} KB flash.`, "ok");
+        if (device.signature !== DEFAULT_DEVICE.signature) {
+          log(`Heads-up: ${device.name} is not the ATmega328P this tool's hosted ` +
+              `firmware targets — make sure the selected hex was built for this chip.`, "warn");
+        }
       }
     } else {
       log(`Auto-detect disabled — using ${DEFAULT_DEVICE.name} settings ` +
@@ -863,7 +904,7 @@ function setBusy(b) {
   fileInput.disabled = b;
   dropEl.style.pointerEvents = b ? "none" : "auto";
   dropEl.style.opacity = b ? "0.6" : "1";
-  ["fwSelect", "optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify", "optSkipBoot"].forEach((id) => { $(id).disabled = b; });
+  ["fwSelect", "optBaud", "optReset", "optSetDevice", "optErase", "optCheckSig", "optSigUniversal", "optVerify", "optSkipBoot"].forEach((id) => { $(id).disabled = b; });
   flashBtn.textContent = b ? "Flashing…" : "Connect & Flash";
 }
 
@@ -1000,7 +1041,7 @@ if (navigator.serial) {
   if (!isAdmin) {
     $("advSection").style.display = "none";
     $("optBaud").value = String(DEFAULT_BAUD);
-    ["optReset", "optSetDevice", "optErase", "optCheckSig", "optVerify"].forEach((id) => { $(id).checked = true; });
+    ["optReset", "optSetDevice", "optErase", "optCheckSig", "optSigUniversal", "optVerify"].forEach((id) => { $(id).checked = true; });
     $("optSkipBoot").checked = false;
   }
   populateFirmwareSelect();
